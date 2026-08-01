@@ -12,13 +12,20 @@ yarn typecheck
 yarn test:unit
 ```
 
-Start Postgres first (`DATABASE\scripts\up.ps1`), then:
+Set `DATABASE_URL` in `.env` to either:
+
+- **Neon** (recommended remote): your Neon connection string with `sslmode=require`
+- **Local Docker**: run `DATABASE\scripts\up.ps1`, then use the localhost URL from `.env.example`
+
+`.env` is gitignored — never commit real credentials.
 
 ```powershell
 yarn dev
 ```
 
 Default: `http://localhost:8787`
+
+Check DB: `GET /ready` → `{ "ok": true, "database": "up" }`
 
 ## Endpoints
 
