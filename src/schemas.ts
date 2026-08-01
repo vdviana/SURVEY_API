@@ -1,0 +1,73 @@
+import { z } from 'zod';
+
+export const enrollSchema = z.object({
+  studyCode: z.string().min(1),
+  locale: z.enum(['en', 'pt-BR']).default('en'),
+  clientAppVersion: z.string().min(1),
+});
+
+export const consentSchema = z.object({
+  protocolVersion: z.string().min(1),
+  consentVersion: z.string().min(1),
+  eligibilityAcks: z.array(z.string().min(1)).min(1),
+  telemetryConsent: z.boolean(),
+  clientAppVersion: z.string().min(1),
+});
+
+export const createSessionSchema = z.object({
+  instrumentCode: z.literal('ipip_bfm_50'),
+  instrumentVersion: z.literal(1),
+  locale: z.enum(['en', 'pt-BR']),
+  manifestHash: z.string().startsWith('sha256:'),
+  clientAppVersion: z.string().min(1),
+  contextAnswers: z
+    .object({
+      sleepHours: z.number().min(0).max(24).optional(),
+      caffeineToday: z.boolean().optional(),
+      medicationNoteProvided: z.boolean().optional(),
+      accessibilityNeeds: z.string().max(500).optional(),
+    })
+    .default({}),
+});
+
+export const responseItemSchema = z.object({
+  itemId: z.string().min(1),
+  sequenceIndex: z.number().int().min(1).max(50),
+  value: z.number().int().min(1).max(5),
+  answeredAt: z.string().datetime(),
+  clientEventId: z.string().min(1),
+});
+
+export const submitResponsesSchema = z.object({
+  idempotencyKey: z.string().min(8).max(128),
+  responses: z.array(responseItemSchema).min(1).max(50),
+  complete: z.boolean().default(false),
+});
+
+export const withdrawSchema = z.object({
+  reasonCode: z.string().max(64).optional(),
+  deleteData: z.boolean().default(true),
+});
+
+export const telemetryEventSchema = z.object({
+  clientEventId: z.string().min(8).max(128),
+  eventType: z.enum([
+    'heartbeat',
+    'app_foreground',
+    'app_background',
+    'progress',
+    'inactivity',
+    'upload_pending',
+    'upload_complete',
+  ]),
+  appState: z.enum(['active', 'background', 'inactive', 'unknown']),
+  progressCount: z.number().int().min(0).max(50),
+  currentPage: z.number().int().min(0).max(10).nullable().optional(),
+  inactivitySeconds: z.number().int().min(0).max(86_400).default(0),
+  networkState: z.enum(['online', 'offline', 'unknown']).default('unknown'),
+  occurredAt: z.string().datetime(),
+});
+
+export const telemetryBatchSchema = z.object({
+  events: z.array(telemetryEventSchema).min(1).max(100),
+});
