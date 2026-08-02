@@ -9,6 +9,7 @@ import {
   buildDiscoveryEnrichment,
   withDiscoveryEnrichment,
 } from '../scoring/discoveryEnrichment.js';
+import { interpretGad7, interpretPhq9 } from '../scoring/moodScreens.js';
 
 const OCEAN_LABELS: Record<string, string> = {
   extraversion: 'Extraversion',
@@ -164,6 +165,8 @@ export async function finalizePersonalityProfile(
     cognitiveSessionId: string;
     ipipSessionId: string;
     dirtyDozenSessionId: string;
+    phqSessionId: string;
+    gadSessionId: string;
     likertLatencies: LikertLatencyInput[];
   },
 ) {
@@ -180,6 +183,8 @@ export async function finalizePersonalityProfile(
       input.cognitiveSessionId,
       input.ipipSessionId,
       input.dirtyDozenSessionId,
+      input.phqSessionId,
+      input.gadSessionId,
     ]) {
       const s = await client.query(
         `SELECT ss.id, ss.status, iv.instrument_code
@@ -194,32 +199,21 @@ export async function finalizePersonalityProfile(
       }
     }
 
-    const cogCheck = await client.query(
-      `SELECT iv.instrument_code
-       FROM survey_sessions ss
-       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id
-       WHERE ss.id = $1`,
-      [input.cognitiveSessionId],
-    );
-    if (cogCheck.rows[0]?.instrument_code !== 'cortical_battery_v1') {
-      throw badRequest('cognitive_session_required');
-    }
-    const ipipCheck = await client.query(
-      `SELECT iv.instrument_code FROM survey_sessions ss
-       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id WHERE ss.id = $1`,
-      [input.ipipSessionId],
-    );
-    if (ipipCheck.rows[0]?.instrument_code !== 'ipip_bfm_50') {
-      throw badRequest('ipip_session_required');
-    }
-    const ddCheck = await client.query(
-      `SELECT iv.instrument_code FROM survey_sessions ss
-       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id WHERE ss.id = $1`,
-      [input.dirtyDozenSessionId],
-    );
-    if (ddCheck.rows[0]?.instrument_code !== 'dirty_dozen_v1') {
-      throw badRequest('dirty_dozen_session_required');
-    }
+    const requireInstrument = async (sessionId: string, code: string) => {
+      const check = await client.query(
+        `SELECT iv.instrument_code FROM survey_sessions ss
+         JOIN instrument_versions iv ON iv.id = ss.instrument_version_id WHERE ss.id = $1`,
+        [sessionId],
+      );
+      if (check.rows[0]?.instrument_code !== code) {
+        throw badRequest(`${code}_session_required`);
+      }
+    };
+    await requireInstrument(input.cognitiveSessionId, 'cortical_battery_v1');
+    await requireInstrument(input.ipipSessionId, 'ipip_bfm_50');
+    await requireInstrument(input.dirtyDozenSessionId, 'dirty_dozen_v1');
+    await requireInstrument(input.phqSessionId, 'phq9_v1');
+    await requireInstrument(input.gadSessionId, 'gad7_v1');
 
     const oceanScores = await client.query(
       `SELECT scale_key, mean_score, raw_sum, item_count
@@ -231,6 +225,24 @@ export async function finalizePersonalityProfile(
        FROM scale_scores WHERE session_id = $1`,
       [input.dirtyDozenSessionId],
     );
+    const phqScore = await client.query(
+      `SELECT scale_key, mean_score, raw_sum, item_count
+       FROM scale_scores WHERE session_id = $1 AND scale_key = 'phq9_total'`,
+      [input.phqSessionId],
+    );
+    const gadScore = await client.query(
+      `SELECT scale_key, mean_score, raw_sum, item_count
+       FROM scale_scores WHERE session_id = $1 AND scale_key = 'gad7_total'`,
+      [input.gadSessionId],
+    );
+    const phqItem9 = await client.query(
+      `SELECT value FROM responses WHERE session_id = $1 AND item_id = 'phq_09'`,
+      [input.phqSessionId],
+    );
+    if (!phqScore.rows[0] || !gadScore.rows[0]) {
+      throw badRequest('mood_scores_missing');
+    }
+
     const cortical = await client.query(
       `SELECT assertiveness_bps, sample_count, block_count, region_effort, fingerprint
        FROM cognitive_session_summaries WHERE session_id = $1`,
@@ -299,6 +311,24 @@ export async function finalizePersonalityProfile(
       await bumpNorm(client, row.scale_key, Number(row.mean_score));
     }
 
+    const phqRaw = Number(phqScore.rows[0].raw_sum);
+    const gadRaw = Number(gadScore.rows[0].raw_sum);
+    const phqFlag = interpretPhq9(phqRaw, Number(phqItem9.rows[0]?.value ?? 0));
+    const gadFlag = interpretGad7(gadRaw);
+    const phqNorm = await loadNorm(client, 'phq9_total');
+    const gadNorm = await loadNorm(client, 'gad7_total');
+    const phqPercentile = percentileFromNorm(phqRaw, phqNorm.mean, phqNorm.std);
+    const gadPercentile = percentileFromNorm(gadRaw, gadNorm.mean, gadNorm.std);
+    await bumpNorm(client, 'phq9_total', phqRaw);
+    await bumpNorm(client, 'gad7_total', gadRaw);
+
+    const moodPhenotyping = {
+      phq9: { ...phqFlag, percentile: phqPercentile },
+      gad7: { ...gadFlag, percentile: gadPercentile },
+      presentationRule:
+        'Flags describe possible symptom patterns from public screens (PHQ-9 / GAD-7). They are not clinical confirmation, diagnosis, prognosis, or treatment advice.',
+    };
+
     const assertivenessBps = Number(cortical.rows[0].assertiveness_bps);
     const assertNorm = await loadNorm(client, 'assertiveness_bps');
     const assertivenessPercentile = percentileFromNorm(
@@ -354,10 +384,12 @@ export async function finalizePersonalityProfile(
       darkTriad,
       cortical: corticalPhenotyping,
       likert: likertPhenotyping,
+      mood: moodPhenotyping,
+      possibleMoodFlags: [phqFlag, gadFlag],
       archetype,
       ...enrichment,
       disclaimer:
-        'Discovery framing only. Not a clinical diagnosis, prognosis, or treatment recommendation. Constructive Dark Triad labels are workplace-style pattern names, not pathology. ' +
+        'Discovery framing only. Not a clinical diagnosis, prognosis, or treatment recommendation. Mood screens show possible patterns only — never confirmation of depression, anxiety, or any disorder. Constructive Dark Triad labels are workplace-style pattern names, not pathology. ' +
         enrichment.enrichmentNote,
     };
 
@@ -370,33 +402,40 @@ export async function finalizePersonalityProfile(
         f: cortical.rows[0].fingerprint,
       },
       likert: { med: medianLatency, mean: meanLatency, ch: changeCount },
-      v: 1,
+      mood: { phq: phqRaw, gad: gadRaw },
+      v: 2,
     };
     const profileCommitment = computeProfileCommitment(commitmentPayload);
 
     await client.query(
       `INSERT INTO personality_profiles (
          participant_id, cognitive_session_id, ipip_session_id, dirty_dozen_session_id,
-         ocean, dark_triad, cortical_phenotyping, likert_phenotyping, percentiles,
+         phq_session_id, gad_session_id,
+         ocean, dark_triad, cortical_phenotyping, likert_phenotyping, mood_phenotyping, percentiles,
          behavioral_archetype, discovery_map, profile_commitment
        ) VALUES (
-         $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb,
-         $10::jsonb, $11::jsonb, $12
+         $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::jsonb, $12::jsonb,
+         $13::jsonb, $14::jsonb, $15
        )`,
       [
         participantId,
         input.cognitiveSessionId,
         input.ipipSessionId,
         input.dirtyDozenSessionId,
+        input.phqSessionId,
+        input.gadSessionId,
         JSON.stringify(Object.fromEntries(ocean.map((o) => [o.scaleKey, o]))),
         JSON.stringify(Object.fromEntries(darkTriad.map((d) => [d.scaleKey, d]))),
         JSON.stringify(corticalPhenotyping),
         JSON.stringify(likertPhenotyping),
+        JSON.stringify(moodPhenotyping),
         JSON.stringify({
           ocean: Object.fromEntries(ocean.map((o) => [o.scaleKey, o.percentile])),
           darkTriad: Object.fromEntries(darkTriad.map((d) => [d.scaleKey, d.percentile])),
           assertiveness: assertivenessPercentile,
           decisionTempo: decisionTempoPercentile,
+          phq9: phqPercentile,
+          gad7: gadPercentile,
         }),
         JSON.stringify(archetype),
         JSON.stringify(discoveryMap),
@@ -413,6 +452,7 @@ export async function finalizePersonalityProfile(
       payload: {
         hasCommitment: true,
         commitmentPrefix: profileCommitment.slice(0, 18),
+        moodElevatedPossible: phqFlag.elevatedPossible || gadFlag.elevatedPossible,
       },
     });
 

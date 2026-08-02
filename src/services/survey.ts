@@ -19,6 +19,16 @@ import {
   DD_SCORER_VERSION,
   scoreDirtyDozen,
 } from '../scoring/dirtyDozen.js';
+import {
+  GAD7_EXPECTED_ITEM_COUNT,
+  GAD7_SCORER_ID,
+  GAD7_SCORER_VERSION,
+  PHQ9_EXPECTED_ITEM_COUNT,
+  PHQ9_SCORER_ID,
+  PHQ9_SCORER_VERSION,
+  scoreGad7,
+  scorePhq9,
+} from '../scoring/moodScreens.js';
 
 export async function enrollParticipant(input: {
   studyCode: string;
@@ -145,7 +155,12 @@ export async function recordConsent(
 export async function createSession(
   participantId: string,
   input: {
-    instrumentCode: 'ipip_bfm_50' | 'cortical_battery_v1' | 'dirty_dozen_v1';
+    instrumentCode:
+      | 'ipip_bfm_50'
+      | 'cortical_battery_v1'
+      | 'dirty_dozen_v1'
+      | 'phq9_v1'
+      | 'gad7_v1';
     instrumentVersion: 1;
     locale: string;
     manifestHash: string;
@@ -337,16 +352,61 @@ export async function submitResponses(
         [session.instrument_version_id],
       );
       const instrumentCode = instrumentMeta.rows[0]?.instrument_code as string | undefined;
-      if (instrumentCode !== 'ipip_bfm_50' && instrumentCode !== 'dirty_dozen_v1') {
+      const scorerConfig: Record<
+        string,
+        {
+          expected: number;
+          scorerId: string;
+          scorerVersion: number;
+          score: (
+            items: Array<{ itemId: string; scaleKey: string; keyedDirection: -1 | 1 }>,
+            responses: Array<{ itemId: string; value: number }>,
+          ) => Array<{ scaleKey: string; rawSum: number; meanScore: number; itemCount: number }>;
+        }
+      > = {
+        ipip_bfm_50: {
+          expected: EXPECTED_ITEM_COUNT,
+          scorerId: SCORER_ID,
+          scorerVersion: SCORER_VERSION,
+          score: scoreIpip50,
+        },
+        dirty_dozen_v1: {
+          expected: DD_EXPECTED_ITEM_COUNT,
+          scorerId: DD_SCORER_ID,
+          scorerVersion: DD_SCORER_VERSION,
+          score: scoreDirtyDozen,
+        },
+        phq9_v1: {
+          expected: PHQ9_EXPECTED_ITEM_COUNT,
+          scorerId: PHQ9_SCORER_ID,
+          scorerVersion: PHQ9_SCORER_VERSION,
+          score: (items, responses) =>
+            scorePhq9(
+              items.map((i) => ({ itemId: i.itemId, scaleKey: i.scaleKey })),
+              responses,
+            ),
+        },
+        gad7_v1: {
+          expected: GAD7_EXPECTED_ITEM_COUNT,
+          scorerId: GAD7_SCORER_ID,
+          scorerVersion: GAD7_SCORER_VERSION,
+          score: (items, responses) =>
+            scoreGad7(
+              items.map((i) => ({ itemId: i.itemId, scaleKey: i.scaleKey })),
+              responses,
+            ),
+        },
+      };
+
+      const config = instrumentCode ? scorerConfig[instrumentCode] : undefined;
+      if (!config) {
         throw badRequest('instrument_not_response_scorable', { instrumentCode });
       }
 
-      const expectedCount =
-        instrumentCode === 'dirty_dozen_v1' ? DD_EXPECTED_ITEM_COUNT : EXPECTED_ITEM_COUNT;
-      if (stored.rows.length !== expectedCount) {
+      if (stored.rows.length !== config.expected) {
         throw badRequest('incomplete_response_set', {
           received: stored.rows.length,
-          expected: expectedCount,
+          expected: config.expected,
         });
       }
 
@@ -360,13 +420,9 @@ export async function submitResponses(
         value: row.value as number,
       }));
 
-      const scores =
-        instrumentCode === 'dirty_dozen_v1'
-          ? scoreDirtyDozen(scoreable, responseValues)
-          : scoreIpip50(scoreable, responseValues);
-      const scorerId = instrumentCode === 'dirty_dozen_v1' ? DD_SCORER_ID : SCORER_ID;
-      const scorerVersion =
-        instrumentCode === 'dirty_dozen_v1' ? DD_SCORER_VERSION : SCORER_VERSION;
+      const scores = config.score(scoreable, responseValues);
+      const scorerId = config.scorerId;
+      const scorerVersion = config.scorerVersion;
 
       for (const score of scores) {
         await client.query(

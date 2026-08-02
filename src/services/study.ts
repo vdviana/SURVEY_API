@@ -30,7 +30,13 @@ export async function getActiveStudyBundle(studyCode: string) {
 
   const instrumentCodes =
     studyCode === 'noosphere_cortical_battery_v1'
-      ? ['cortical_battery_v1', 'ipip_bfm_50', 'dirty_dozen_v1']
+      ? [
+          'cortical_battery_v1',
+          'ipip_bfm_50',
+          'dirty_dozen_v1',
+          'phq9_v1',
+          'gad7_v1',
+        ]
       : ['ipip_bfm_50'];
 
   const instruments = await pool.query(

@@ -81,7 +81,9 @@ export async function surveyRoutes(app: FastifyInstance) {
     if (
       (params.code !== 'ipip_bfm_50' &&
         params.code !== 'cortical_battery_v1' &&
-        params.code !== 'dirty_dozen_v1') ||
+        params.code !== 'dirty_dozen_v1' &&
+        params.code !== 'phq9_v1' &&
+        params.code !== 'gad7_v1') ||
       version !== 1
     ) {
       throw badRequest('unsupported_instrument');

@@ -15,7 +15,13 @@ export const consentSchema = z.object({
 });
 
 export const createSessionSchema = z.object({
-  instrumentCode: z.enum(['ipip_bfm_50', 'cortical_battery_v1', 'dirty_dozen_v1']),
+  instrumentCode: z.enum([
+    'ipip_bfm_50',
+    'cortical_battery_v1',
+    'dirty_dozen_v1',
+    'phq9_v1',
+    'gad7_v1',
+  ]),
   instrumentVersion: z.literal(1),
   locale: z.enum(['en', 'pt-BR']),
   manifestHash: z.string().startsWith('sha256:'),
@@ -34,16 +40,23 @@ export const finalizeProfileSchema = z.object({
   cognitiveSessionId: z.string().uuid(),
   ipipSessionId: z.string().uuid(),
   dirtyDozenSessionId: z.string().uuid(),
+  phqSessionId: z.string().uuid(),
+  gadSessionId: z.string().uuid(),
   likertLatencies: z
     .array(
       z.object({
         itemId: z.string().min(1),
-        instrumentCode: z.enum(['ipip_bfm_50', 'dirty_dozen_v1']),
+        instrumentCode: z.enum([
+          'ipip_bfm_50',
+          'dirty_dozen_v1',
+          'phq9_v1',
+          'gad7_v1',
+        ]),
         latencyMs: z.number().min(0).max(120_000),
         changeCount: z.number().int().min(0).max(50).optional(),
       }),
     )
-    .max(80)
+    .max(120)
     .default([]),
 });
 
@@ -89,7 +102,7 @@ export const cognitiveCompleteSchema = z.object({
 export const responseItemSchema = z.object({
   itemId: z.string().min(1),
   sequenceIndex: z.number().int().min(1).max(50),
-  value: z.number().int().min(1).max(5),
+  value: z.number().int().min(0).max(5),
   answeredAt: z.string().datetime(),
   clientEventId: z.string().min(1),
 });
