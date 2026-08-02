@@ -47,15 +47,8 @@ export function computeManifestHash(seed: InstrumentSeed): string {
 }
 
 export function loadBundledEnglishInstrument(): InstrumentSeed {
+  // Resolves from both src/lib (dev) and dist/lib (Render/production).
   const here = dirname(fileURLToPath(import.meta.url));
-  const path = join(
-    here,
-    '..',
-    '..',
-    '..',
-    'DATABASE',
-    'seed',
-    'ipip_bfm_50_en.json',
-  );
+  const path = join(here, '..', '..', 'seed', 'ipip_bfm_50_en.json');
   return JSON.parse(readFileSync(path, 'utf8')) as InstrumentSeed;
 }
