@@ -28,19 +28,19 @@ export async function getActiveStudyBundle(studyCode: string) {
     throw notFound('protocol_not_found');
   }
 
-  const instrumentCode =
+  const instrumentCodes =
     studyCode === 'noosphere_cortical_battery_v1'
-      ? 'cortical_battery_v1'
-      : 'ipip_bfm_50';
+      ? ['cortical_battery_v1', 'ipip_bfm_50', 'dirty_dozen_v1']
+      : ['ipip_bfm_50'];
 
   const instruments = await pool.query(
     `SELECT id, instrument_code, instrument_version, title, locale, locale_enabled,
             evidence_tier, response_scale, instructions_en, instructions_pt_br,
             item_count, manifest_hash, scorer_id, provenance, prohibited_inferences
      FROM instrument_versions
-     WHERE instrument_code = $1 AND instrument_version = 1
-     ORDER BY locale`,
-    [instrumentCode],
+     WHERE instrument_code = ANY($1::text[]) AND instrument_version = 1
+     ORDER BY instrument_code, locale`,
+    [instrumentCodes],
   );
 
   return {

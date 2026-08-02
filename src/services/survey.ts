@@ -13,6 +13,12 @@ import {
   SCORER_VERSION,
   scoreIpip50,
 } from '../scoring/ipip50.js';
+import {
+  DD_EXPECTED_ITEM_COUNT,
+  DD_SCORER_ID,
+  DD_SCORER_VERSION,
+  scoreDirtyDozen,
+} from '../scoring/dirtyDozen.js';
 
 export async function enrollParticipant(input: {
   studyCode: string;
@@ -139,7 +145,7 @@ export async function recordConsent(
 export async function createSession(
   participantId: string,
   input: {
-    instrumentCode: 'ipip_bfm_50' | 'cortical_battery_v1';
+    instrumentCode: 'ipip_bfm_50' | 'cortical_battery_v1' | 'dirty_dozen_v1';
     instrumentVersion: 1;
     locale: string;
     manifestHash: string;
@@ -326,24 +332,41 @@ export async function submitResponses(
     );
 
     if (input.complete) {
-      if (stored.rows.length !== EXPECTED_ITEM_COUNT) {
+      const instrumentMeta = await client.query(
+        `SELECT instrument_code FROM instrument_versions WHERE id = $1`,
+        [session.instrument_version_id],
+      );
+      const instrumentCode = instrumentMeta.rows[0]?.instrument_code as string | undefined;
+      if (instrumentCode !== 'ipip_bfm_50' && instrumentCode !== 'dirty_dozen_v1') {
+        throw badRequest('instrument_not_response_scorable', { instrumentCode });
+      }
+
+      const expectedCount =
+        instrumentCode === 'dirty_dozen_v1' ? DD_EXPECTED_ITEM_COUNT : EXPECTED_ITEM_COUNT;
+      if (stored.rows.length !== expectedCount) {
         throw badRequest('incomplete_response_set', {
           received: stored.rows.length,
-          expected: EXPECTED_ITEM_COUNT,
+          expected: expectedCount,
         });
       }
 
-      const scores = scoreIpip50(
-        items.rows.map((row) => ({
-          itemId: row.item_id,
-          scaleKey: row.scale_key,
-          keyedDirection: row.keyed_direction,
-        })),
-        stored.rows.map((row) => ({
-          itemId: row.item_id,
-          value: row.value,
-        })),
-      );
+      const scoreable = items.rows.map((row) => ({
+        itemId: row.item_id as string,
+        scaleKey: row.scale_key as string,
+        keyedDirection: row.keyed_direction as -1 | 1,
+      }));
+      const responseValues = stored.rows.map((row) => ({
+        itemId: row.item_id as string,
+        value: row.value as number,
+      }));
+
+      const scores =
+        instrumentCode === 'dirty_dozen_v1'
+          ? scoreDirtyDozen(scoreable, responseValues)
+          : scoreIpip50(scoreable, responseValues);
+      const scorerId = instrumentCode === 'dirty_dozen_v1' ? DD_SCORER_ID : SCORER_ID;
+      const scorerVersion =
+        instrumentCode === 'dirty_dozen_v1' ? DD_SCORER_VERSION : SCORER_VERSION;
 
       for (const score of scores) {
         await client.query(
@@ -353,8 +376,8 @@ export async function submitResponses(
            ON CONFLICT (session_id, scale_key, scorer_version) DO NOTHING`,
           [
             sessionId,
-            SCORER_ID,
-            SCORER_VERSION,
+            scorerId,
+            scorerVersion,
             score.scaleKey,
             score.rawSum,
             score.meanScore,
@@ -379,7 +402,7 @@ export async function submitResponses(
         eventType: 'session.scored',
         entityType: 'survey_session',
         entityId: sessionId,
-        payload: { scorerId: SCORER_ID, scorerVersion: SCORER_VERSION },
+        payload: { scorerId, scorerVersion, instrumentCode },
       });
     } else {
       await client.query(
@@ -491,6 +514,9 @@ export async function withdrawParticipant(
     );
 
     if (input.deleteData) {
+      await client.query(`DELETE FROM personality_profiles WHERE participant_id = $1`, [
+        participantId,
+      ]);
       await client.query(
         `DELETE FROM cognitive_session_summaries
          WHERE session_id IN (SELECT id FROM survey_sessions WHERE participant_id = $1)`,

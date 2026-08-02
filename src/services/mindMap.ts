@@ -1,0 +1,439 @@
+import { withTransaction, pool, type DbClient } from '../db.js';
+import { badRequest, notFound } from '../lib/errors.js';
+import { writeAudit } from './audit.js';
+import {
+  computeProfileCommitment,
+  darkTriadClassification,
+} from '../scoring/dirtyDozen.js';
+
+const OCEAN_LABELS: Record<string, string> = {
+  extraversion: 'Extraversion',
+  agreeableness: 'Agreeableness',
+  conscientiousness: 'Conscientiousness',
+  emotional_stability: 'Emotional Stability',
+  intellect: 'Intellect / Openness',
+};
+
+const DD_LABELS: Record<string, string> = {
+  machiavellianism: 'Strategic Style',
+  narcissism: 'Recognition Drive',
+  psychopathy: 'Impulse Restraint',
+};
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+/** Approximate normal CDF → percentile 1–99. */
+function percentileFromNorm(value: number, mean: number, std: number): number {
+  const sigma = std > 0.01 ? std : 1;
+  const z = (value - mean) / sigma;
+  // Abramowitz & Stegun approximation
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp((-z * z) / 2);
+  const p =
+    d *
+    t *
+    (0.3193815 +
+      t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  const cdf = z > 0 ? 1 - p : p;
+  return clamp(Math.round(cdf * 100), 1, 99);
+}
+
+function bandFromPercentile(p: number): string {
+  if (p >= 85) return 'notably high vs peers';
+  if (p >= 65) return 'above typical';
+  if (p <= 15) return 'notably low vs peers';
+  if (p <= 35) return 'below typical';
+  return 'near typical';
+}
+
+async function loadNorm(
+  client: DbClient,
+  scaleKey: string,
+): Promise<{ mean: number; std: number }> {
+  const row = await client.query(
+    `SELECT mean_score, std_score FROM personality_norm_stats WHERE scale_key = $1`,
+    [scaleKey],
+  );
+  if (!row.rows[0]) return { mean: 3, std: 0.7 };
+  return {
+    mean: Number(row.rows[0].mean_score),
+    std: Number(row.rows[0].std_score),
+  };
+}
+
+async function bumpNorm(client: DbClient, scaleKey: string, value: number) {
+  const existing = await client.query(
+    `SELECT sample_count, mean_score, std_score FROM personality_norm_stats WHERE scale_key = $1 FOR UPDATE`,
+    [scaleKey],
+  );
+  if (!existing.rows[0]) {
+    await client.query(
+      `INSERT INTO personality_norm_stats (scale_key, sample_count, mean_score, std_score)
+       VALUES ($1, 1, $2, 0.7)`,
+      [scaleKey, value],
+    );
+    return;
+  }
+  const n = Number(existing.rows[0].sample_count);
+  const mean = Number(existing.rows[0].mean_score);
+  const std = Number(existing.rows[0].std_score);
+  const nextN = n + 1;
+  const nextMean = mean + (value - mean) / nextN;
+  // Welford-ish variance proxy from prior std
+  const priorVar = std * std;
+  const nextVar =
+    n <= 0
+      ? priorVar
+      : ((n - 1) * priorVar + (value - mean) * (value - nextMean)) / Math.max(1, n);
+  const nextStd = Math.sqrt(Math.max(0.05, nextVar));
+  await client.query(
+    `UPDATE personality_norm_stats
+     SET sample_count = $2, mean_score = $3, std_score = $4, updated_at = now()
+     WHERE scale_key = $1`,
+    [scaleKey, nextN, nextMean, nextStd],
+  );
+}
+
+function buildArchetype(input: {
+  ocean: Array<{ scaleKey: string; percentile: number }>;
+  assertivenessPercentile: number;
+  dark: Array<{ scaleKey: string; percentile: number; classification: string }>;
+}) {
+  const sorted = [...input.ocean].sort((a, b) => b.percentile - a.percentile);
+  const top = sorted[0];
+  const low = sorted[sorted.length - 1];
+  const nameParts: string[] = [];
+  if (input.assertivenessPercentile >= 70) nameParts.push('Decisive');
+  else if (input.assertivenessPercentile <= 30) nameParts.push('Measured');
+  else nameParts.push('Steady');
+
+  if (top?.scaleKey === 'intellect') nameParts.push('Explorer');
+  else if (top?.scaleKey === 'conscientiousness') nameParts.push('Builder');
+  else if (top?.scaleKey === 'extraversion') nameParts.push('Connector');
+  else if (top?.scaleKey === 'agreeableness') nameParts.push('Ally');
+  else nameParts.push('Stabilizer');
+
+  const strategy = input.dark.find((d) => d.scaleKey === 'machiavellianism');
+  if (strategy && strategy.percentile >= 70) {
+    nameParts.push('Strategist');
+  }
+
+  const superpowers: string[] = [];
+  const blindSpots: string[] = [];
+  for (const o of input.ocean) {
+    const label = OCEAN_LABELS[o.scaleKey] ?? o.scaleKey;
+    if (o.percentile >= 70) superpowers.push(`Strength in ${label}`);
+    if (o.percentile <= 30) blindSpots.push(`Lower relative ${label}`);
+  }
+  if (input.assertivenessPercentile >= 70) {
+    superpowers.push('Strong behavioral decisiveness under interactive load');
+  } else if (input.assertivenessPercentile <= 30) {
+    blindSpots.push('Slower decisiveness under interactive load — may need pacing cues');
+  }
+  if (superpowers.length === 0) {
+    superpowers.push('Balanced profile across discovery layers');
+  }
+  if (blindSpots.length === 0) {
+    blindSpots.push('No extreme blind spots vs this cohort sample');
+  }
+
+  return {
+    name: nameParts.slice(0, 3).join(' '),
+    summary: `Your discovery pattern leans ${top ? OCEAN_LABELS[top.scaleKey] ?? top.scaleKey : 'balanced'} relative to others in this study, with ${low ? `relatively lower ${OCEAN_LABELS[low.scaleKey] ?? low.scaleKey}` : 'even traits'}.`,
+    superpowers: superpowers.slice(0, 4),
+    blindSpots: blindSpots.slice(0, 3),
+  };
+}
+
+export type LikertLatencyInput = {
+  itemId: string;
+  instrumentCode: string;
+  latencyMs: number;
+  changeCount?: number;
+};
+
+export async function finalizePersonalityProfile(
+  participantId: string,
+  input: {
+    cognitiveSessionId: string;
+    ipipSessionId: string;
+    dirtyDozenSessionId: string;
+    likertLatencies: LikertLatencyInput[];
+  },
+) {
+  return withTransaction(async (client) => {
+    const existing = await client.query(
+      `SELECT id FROM personality_profiles WHERE participant_id = $1`,
+      [participantId],
+    );
+    if (existing.rows[0]) {
+      return getMindMapPublic(client, participantId);
+    }
+
+    for (const sid of [
+      input.cognitiveSessionId,
+      input.ipipSessionId,
+      input.dirtyDozenSessionId,
+    ]) {
+      const s = await client.query(
+        `SELECT ss.id, ss.status, iv.instrument_code
+         FROM survey_sessions ss
+         JOIN instrument_versions iv ON iv.id = ss.instrument_version_id
+         WHERE ss.id = $1 AND ss.participant_id = $2`,
+        [sid, participantId],
+      );
+      if (!s.rows[0]) throw notFound('session_not_found');
+      if (s.rows[0].status !== 'scored') {
+        throw badRequest('session_not_scored', { sessionId: sid });
+      }
+    }
+
+    const cogCheck = await client.query(
+      `SELECT iv.instrument_code
+       FROM survey_sessions ss
+       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id
+       WHERE ss.id = $1`,
+      [input.cognitiveSessionId],
+    );
+    if (cogCheck.rows[0]?.instrument_code !== 'cortical_battery_v1') {
+      throw badRequest('cognitive_session_required');
+    }
+    const ipipCheck = await client.query(
+      `SELECT iv.instrument_code FROM survey_sessions ss
+       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id WHERE ss.id = $1`,
+      [input.ipipSessionId],
+    );
+    if (ipipCheck.rows[0]?.instrument_code !== 'ipip_bfm_50') {
+      throw badRequest('ipip_session_required');
+    }
+    const ddCheck = await client.query(
+      `SELECT iv.instrument_code FROM survey_sessions ss
+       JOIN instrument_versions iv ON iv.id = ss.instrument_version_id WHERE ss.id = $1`,
+      [input.dirtyDozenSessionId],
+    );
+    if (ddCheck.rows[0]?.instrument_code !== 'dirty_dozen_v1') {
+      throw badRequest('dirty_dozen_session_required');
+    }
+
+    const oceanScores = await client.query(
+      `SELECT scale_key, mean_score, raw_sum, item_count
+       FROM scale_scores WHERE session_id = $1`,
+      [input.ipipSessionId],
+    );
+    const ddScores = await client.query(
+      `SELECT scale_key, mean_score, raw_sum, item_count
+       FROM scale_scores WHERE session_id = $1`,
+      [input.dirtyDozenSessionId],
+    );
+    const cortical = await client.query(
+      `SELECT assertiveness_bps, sample_count, block_count, region_effort, fingerprint
+       FROM cognitive_session_summaries WHERE session_id = $1`,
+      [input.cognitiveSessionId],
+    );
+    if (!cortical.rows[0]) throw badRequest('cognitive_summary_missing');
+
+    const latencies = input.likertLatencies.filter(
+      (l) => Number.isFinite(l.latencyMs) && l.latencyMs >= 0 && l.latencyMs < 120_000,
+    );
+    const latencyValues = latencies.map((l) => l.latencyMs).sort((a, b) => a - b);
+    const meanLatency =
+      latencyValues.length > 0
+        ? latencyValues.reduce((a, b) => a + b, 0) / latencyValues.length
+        : 900;
+    const medianLatency =
+      latencyValues.length > 0
+        ? latencyValues[Math.floor(latencyValues.length / 2)]
+        : 900;
+    const changeCount = latencies.reduce((a, l) => a + (l.changeCount ?? 0), 0);
+
+    const ocean: Array<{
+      scaleKey: string;
+      label: string;
+      meanScore: number;
+      rawSum: number;
+      percentile: number;
+      band: string;
+    }> = [];
+    for (const row of oceanScores.rows) {
+      const norm = await loadNorm(client, row.scale_key);
+      const percentile = percentileFromNorm(Number(row.mean_score), norm.mean, norm.std);
+      ocean.push({
+        scaleKey: row.scale_key,
+        label: OCEAN_LABELS[row.scale_key] ?? row.scale_key,
+        meanScore: Number(row.mean_score),
+        rawSum: Number(row.raw_sum),
+        percentile,
+        band: bandFromPercentile(percentile),
+      });
+      await bumpNorm(client, row.scale_key, Number(row.mean_score));
+    }
+
+    const darkTriad: Array<{
+      scaleKey: string;
+      label: string;
+      meanScore: number;
+      rawSum: number;
+      percentile: number;
+      classification: string;
+      framing: string;
+    }> = [];
+    for (const row of ddScores.rows) {
+      const norm = await loadNorm(client, row.scale_key);
+      const percentile = percentileFromNorm(Number(row.mean_score), norm.mean, norm.std);
+      const cls = darkTriadClassification(row.scale_key, percentile);
+      darkTriad.push({
+        scaleKey: row.scale_key,
+        label: DD_LABELS[row.scale_key] ?? row.scale_key,
+        meanScore: Number(row.mean_score),
+        rawSum: Number(row.raw_sum),
+        percentile,
+        classification: cls.classification,
+        framing: cls.framing,
+      });
+      await bumpNorm(client, row.scale_key, Number(row.mean_score));
+    }
+
+    const assertivenessBps = Number(cortical.rows[0].assertiveness_bps);
+    const assertNorm = await loadNorm(client, 'assertiveness_bps');
+    const assertivenessPercentile = percentileFromNorm(
+      assertivenessBps,
+      assertNorm.mean,
+      assertNorm.std,
+    );
+    await bumpNorm(client, 'assertiveness_bps', assertivenessBps);
+
+    const tempoNorm = await loadNorm(client, 'decision_tempo_ms');
+    const decisionTempoPercentile = percentileFromNorm(
+      medianLatency,
+      tempoNorm.mean,
+      tempoNorm.std,
+    );
+    await bumpNorm(client, 'decision_tempo_ms', medianLatency);
+
+    const corticalPhenotyping = {
+      assertivenessBps,
+      assertivenessPercentile,
+      assertivenessBand: bandFromPercentile(assertivenessPercentile),
+      sampleCount: Number(cortical.rows[0].sample_count),
+      blockCount: Number(cortical.rows[0].block_count),
+      regionEffort: cortical.rows[0].region_effort,
+    };
+
+    const likertPhenotyping = {
+      medianLatencyMs: Math.round(medianLatency),
+      meanLatencyMs: Math.round(meanLatency),
+      itemCount: latencies.length,
+      changeCount,
+      decisionTempoPercentile,
+      decisionTempoBand: bandFromPercentile(decisionTempoPercentile),
+    };
+
+    const archetype = buildArchetype({
+      ocean,
+      assertivenessPercentile,
+      dark: darkTriad,
+    });
+
+    const discoveryMap = {
+      title: 'Deep Mind Auto-Discovery Map',
+      tagline: 'Patterns discovered from your session — compared with others in this study.',
+      ocean,
+      darkTriad,
+      cortical: corticalPhenotyping,
+      likert: likertPhenotyping,
+      archetype,
+      disclaimer:
+        'Discovery framing only. Not a clinical diagnosis, prognosis, or treatment recommendation. Constructive Dark Triad labels are workplace-style pattern names, not pathology.',
+    };
+
+    const commitmentPayload = {
+      ocean: ocean.map((o) => ({ k: o.scaleKey, m: o.meanScore, p: o.percentile })),
+      dark: darkTriad.map((d) => ({ k: d.scaleKey, m: d.meanScore, p: d.percentile })),
+      cortical: {
+        a: assertivenessBps,
+        e: cortical.rows[0].region_effort,
+        f: cortical.rows[0].fingerprint,
+      },
+      likert: { med: medianLatency, mean: meanLatency, ch: changeCount },
+      v: 1,
+    };
+    const profileCommitment = computeProfileCommitment(commitmentPayload);
+
+    await client.query(
+      `INSERT INTO personality_profiles (
+         participant_id, cognitive_session_id, ipip_session_id, dirty_dozen_session_id,
+         ocean, dark_triad, cortical_phenotyping, likert_phenotyping, percentiles,
+         behavioral_archetype, discovery_map, profile_commitment
+       ) VALUES (
+         $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb,
+         $10::jsonb, $11::jsonb, $12
+       )`,
+      [
+        participantId,
+        input.cognitiveSessionId,
+        input.ipipSessionId,
+        input.dirtyDozenSessionId,
+        JSON.stringify(Object.fromEntries(ocean.map((o) => [o.scaleKey, o]))),
+        JSON.stringify(Object.fromEntries(darkTriad.map((d) => [d.scaleKey, d]))),
+        JSON.stringify(corticalPhenotyping),
+        JSON.stringify(likertPhenotyping),
+        JSON.stringify({
+          ocean: Object.fromEntries(ocean.map((o) => [o.scaleKey, o.percentile])),
+          darkTriad: Object.fromEntries(darkTriad.map((d) => [d.scaleKey, d.percentile])),
+          assertiveness: assertivenessPercentile,
+          decisionTempo: decisionTempoPercentile,
+        }),
+        JSON.stringify(archetype),
+        JSON.stringify(discoveryMap),
+        profileCommitment,
+      ],
+    );
+
+    await writeAudit(client, {
+      actorType: 'participant',
+      actorId: participantId,
+      eventType: 'personality.profile_finalized',
+      entityType: 'participant',
+      entityId: participantId,
+      payload: {
+        hasCommitment: true,
+        commitmentPrefix: profileCommitment.slice(0, 18),
+      },
+    });
+
+    return {
+      ready: true,
+      discoveryMap,
+    };
+  });
+}
+
+async function getMindMapPublic(client: DbClient, participantId: string) {
+  const row = await client.query(
+    `SELECT discovery_map FROM personality_profiles WHERE participant_id = $1`,
+    [participantId],
+  );
+  if (!row.rows[0]) throw notFound('mind_map_not_found');
+  return {
+    ready: true,
+    discoveryMap: row.rows[0].discovery_map,
+  };
+}
+
+export async function getParticipantMindMap(participantId: string) {
+  const row = await pool.query(
+    `SELECT discovery_map FROM personality_profiles WHERE participant_id = $1`,
+    [participantId],
+  );
+  if (!row.rows[0]) throw notFound('mind_map_not_found');
+  // Never expose profile_commitment to clients
+  return {
+    ready: true,
+    discoveryMap: row.rows[0].discovery_map,
+  };
+}
+
+/** Exported for unit tests / internal tooling only — not routed. */
+export { computeProfileCommitment as hashCommitmentForTests };

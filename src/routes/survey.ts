@@ -5,6 +5,7 @@ import {
   consentSchema,
   createSessionSchema,
   enrollSchema,
+  finalizeProfileSchema,
   submitResponsesSchema,
   telemetryBatchSchema,
   withdrawSchema,
@@ -22,6 +23,10 @@ import {
   completeCognitiveSession,
   ingestCognitiveSamples,
 } from '../services/cognitive.js';
+import {
+  finalizePersonalityProfile,
+  getParticipantMindMap,
+} from '../services/mindMap.js';
 import { getEnabledInstrument } from '../services/study.js';
 import { badRequest } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -74,7 +79,9 @@ export async function surveyRoutes(app: FastifyInstance) {
     const locale = query.locale ?? 'en';
     const version = Number(params.version);
     if (
-      (params.code !== 'ipip_bfm_50' && params.code !== 'cortical_battery_v1') ||
+      (params.code !== 'ipip_bfm_50' &&
+        params.code !== 'cortical_battery_v1' &&
+        params.code !== 'dirty_dozen_v1') ||
       version !== 1
     ) {
       throw badRequest('unsupported_instrument');
@@ -140,6 +147,17 @@ export async function surveyRoutes(app: FastifyInstance) {
       locale: participant.locale,
       retentionState: participant.retention_state,
     };
+  });
+
+  app.post('/v1/me/finalize-profile', async (request) => {
+    const participant = await requireParticipant(request);
+    const body = finalizeProfileSchema.parse(request.body);
+    return finalizePersonalityProfile(participant.id, body);
+  });
+
+  app.get('/v1/me/mind-map', async (request) => {
+    const participant = await requireParticipant(request);
+    return getParticipantMindMap(participant.id);
   });
 
   app.get('/v1/research/live-sessions', async (request) => {
