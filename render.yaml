@@ -1,0 +1,34 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Or configure a Web Service manually (see README) with the same build/start commands.
+services:
+  - type: web
+    name: noosphere-survey-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: .
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    startCommand: yarn start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22.11.0"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: "0.0.0.0"
+      # Render injects PORT automatically — do not set it here.
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: LOG_LEVEL
+        value: info
+      - key: RATE_LIMIT_MAX
+        value: "120"
+      - key: RATE_LIMIT_TIME_WINDOW
+        value: "1 minute"
+      - key: APP_VERSION_HEADER
+        value: x-survey-app-version
+      - key: RESEARCHER_API_KEY
+        sync: false
