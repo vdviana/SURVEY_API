@@ -5,6 +5,10 @@ import {
   computeProfileCommitment,
   darkTriadClassification,
 } from '../scoring/dirtyDozen.js';
+import {
+  buildDiscoveryEnrichment,
+  withDiscoveryEnrichment,
+} from '../scoring/discoveryEnrichment.js';
 
 const OCEAN_LABELS: Record<string, string> = {
   extraversion: 'Extraversion',
@@ -336,6 +340,13 @@ export async function finalizePersonalityProfile(
       dark: darkTriad,
     });
 
+    const enrichment = buildDiscoveryEnrichment({
+      ocean,
+      darkTriad,
+      cortical: corticalPhenotyping,
+      likert: likertPhenotyping,
+    });
+
     const discoveryMap = {
       title: 'Deep Mind Auto-Discovery Map',
       tagline: 'Patterns discovered from your session — compared with others in this study.',
@@ -344,8 +355,10 @@ export async function finalizePersonalityProfile(
       cortical: corticalPhenotyping,
       likert: likertPhenotyping,
       archetype,
+      ...enrichment,
       disclaimer:
-        'Discovery framing only. Not a clinical diagnosis, prognosis, or treatment recommendation. Constructive Dark Triad labels are workplace-style pattern names, not pathology.',
+        'Discovery framing only. Not a clinical diagnosis, prognosis, or treatment recommendation. Constructive Dark Triad labels are workplace-style pattern names, not pathology. ' +
+        enrichment.enrichmentNote,
     };
 
     const commitmentPayload = {
@@ -418,7 +431,9 @@ async function getMindMapPublic(client: DbClient, participantId: string) {
   if (!row.rows[0]) throw notFound('mind_map_not_found');
   return {
     ready: true,
-    discoveryMap: row.rows[0].discovery_map,
+    discoveryMap: withDiscoveryEnrichment(
+      row.rows[0].discovery_map as Record<string, unknown>,
+    ),
   };
 }
 
@@ -431,7 +446,9 @@ export async function getParticipantMindMap(participantId: string) {
   // Never expose profile_commitment to clients
   return {
     ready: true,
-    discoveryMap: row.rows[0].discovery_map,
+    discoveryMap: withDiscoveryEnrichment(
+      row.rows[0].discovery_map as Record<string, unknown>,
+    ),
   };
 }
 
