@@ -28,13 +28,19 @@ export async function getActiveStudyBundle(studyCode: string) {
     throw notFound('protocol_not_found');
   }
 
+  const instrumentCode =
+    studyCode === 'noosphere_cortical_battery_v1'
+      ? 'cortical_battery_v1'
+      : 'ipip_bfm_50';
+
   const instruments = await pool.query(
     `SELECT id, instrument_code, instrument_version, title, locale, locale_enabled,
             evidence_tier, response_scale, instructions_en, instructions_pt_br,
             item_count, manifest_hash, scorer_id, provenance, prohibited_inferences
      FROM instrument_versions
-     WHERE instrument_code = 'ipip_bfm_50' AND instrument_version = 1
+     WHERE instrument_code = $1 AND instrument_version = 1
      ORDER BY locale`,
+    [instrumentCode],
   );
 
   return {
@@ -65,7 +71,7 @@ export async function getEnabledInstrument(
     throw badRequest('locale_not_enabled', {
       locale,
       message:
-        'Portuguese is scaffolded but disabled until validated wording is approved.',
+        'Brazilian Portuguese collection is disabled until validated wording is approved.',
     });
   }
 
@@ -77,7 +83,7 @@ export async function getEnabledInstrument(
     [instrument.id],
   );
 
-  if (locale === 'en') {
+  if (instrumentCode === 'ipip_bfm_50' && locale === 'en') {
     const bundled = loadBundledEnglishInstrument();
     const expected = computeManifestHash(bundled);
     if (instrument.manifest_hash !== expected) {

@@ -139,7 +139,7 @@ export async function recordConsent(
 export async function createSession(
   participantId: string,
   input: {
-    instrumentCode: 'ipip_bfm_50';
+    instrumentCode: 'ipip_bfm_50' | 'cortical_battery_v1';
     instrumentVersion: 1;
     locale: string;
     manifestHash: string;
@@ -491,6 +491,21 @@ export async function withdrawParticipant(
     );
 
     if (input.deleteData) {
+      await client.query(
+        `DELETE FROM cognitive_session_summaries
+         WHERE session_id IN (SELECT id FROM survey_sessions WHERE participant_id = $1)`,
+        [participantId],
+      );
+      await client.query(
+        `DELETE FROM cognitive_sample_batches
+         WHERE session_id IN (SELECT id FROM survey_sessions WHERE participant_id = $1)`,
+        [participantId],
+      );
+      await client.query(
+        `DELETE FROM session_telemetry_events
+         WHERE session_id IN (SELECT id FROM survey_sessions WHERE participant_id = $1)`,
+        [participantId],
+      );
       await client.query(
         `DELETE FROM scale_scores
          WHERE session_id IN (SELECT id FROM survey_sessions WHERE participant_id = $1)`,

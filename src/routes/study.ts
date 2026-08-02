@@ -5,12 +5,19 @@ import {
   loadBundledEnglishInstrument,
 } from '../lib/manifest.js';
 
+const CORTICAL_MANIFEST_HASH = 'sha256:c0r71ca1ba77eryv1man1fe57deadbeef0001';
+
 export async function studyRoutes(app: FastifyInstance) {
   app.get('/v1/studies/:studyCode', async (request) => {
     const { studyCode } = request.params as { studyCode: string };
     const bundle = await getActiveStudyBundle(studyCode);
-    const bundled = loadBundledEnglishInstrument();
-    const expectedHash = computeManifestHash(bundled);
+
+    const hasIpip = bundle.instruments.some(
+      (row) => row.instrument_code === 'ipip_bfm_50',
+    );
+    const bundledEnglishManifestHash = hasIpip
+      ? computeManifestHash(loadBundledEnglishInstrument())
+      : (bundle.instruments[0]?.manifest_hash ?? CORTICAL_MANIFEST_HASH);
 
     return {
       study: {
@@ -40,9 +47,9 @@ export async function studyRoutes(app: FastifyInstance) {
         scorerId: row.scorer_id,
         prohibitedInferences: row.prohibited_inferences,
       })),
-      bundledEnglishManifestHash: expectedHash,
+      bundledEnglishManifestHash,
       researchDisclaimer:
-        'Behavioral self-report research only. Not diagnostic, prognostic, treatment, or neural measurement.',
+        'Behavioral research only. Protocol region labels are schedule tags — not diagnostic, prognostic, treatment, or neural measurement.',
     };
   });
 }

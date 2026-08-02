@@ -15,7 +15,7 @@ export const consentSchema = z.object({
 });
 
 export const createSessionSchema = z.object({
-  instrumentCode: z.literal('ipip_bfm_50'),
+  instrumentCode: z.enum(['ipip_bfm_50', 'cortical_battery_v1']),
   instrumentVersion: z.literal(1),
   locale: z.enum(['en', 'pt-BR']),
   manifestHash: z.string().startsWith('sha256:'),
@@ -28,6 +28,45 @@ export const createSessionSchema = z.object({
       accessibilityNeeds: z.string().max(500).optional(),
     })
     .default({}),
+});
+
+const cognitiveSampleSchema = z.object({
+  tMs: z.number(),
+  type: z.string().min(1).max(64),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  module: z.string().max(64).optional(),
+  questionId: z.string().max(128).optional(),
+  pointerId: z.number().optional(),
+  gx: z.number().optional(),
+  gy: z.number().optional(),
+  gz: z.number().optional(),
+  ax: z.number().optional(),
+  ay: z.number().optional(),
+  az: z.number().optional(),
+  lux: z.number().optional(),
+  effort01: z.number().optional(),
+  trackingError: z.number().optional(),
+  rtMs: z.number().optional(),
+  errorCount: z.number().optional(),
+  hitRate: z.number().optional(),
+  sensorEnergy: z.number().optional(),
+  difficulty: z.number().optional(),
+  dualTaskBreaks: z.number().optional(),
+  meta: z.string().max(512).optional(),
+});
+
+export const cognitiveSamplesSchema = z.object({
+  clientBatchId: z.string().min(8).max(128),
+  module: z.string().min(1).max(64),
+  region: z.enum(['mnemico', 'limbico', 'perceptivo', 'heuristico']),
+  blockId: z.string().max(128).optional(),
+  blockIndex: z.number().int().min(0).max(200).optional(),
+  samples: z.array(cognitiveSampleSchema).min(1).max(2000),
+});
+
+export const cognitiveCompleteSchema = z.object({
+  blockCount: z.number().int().min(1).max(200),
 });
 
 export const responseItemSchema = z.object({

@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import {
+  cognitiveCompleteSchema,
+  cognitiveSamplesSchema,
   consentSchema,
   createSessionSchema,
   enrollSchema,
@@ -16,6 +18,10 @@ import {
   submitResponses,
   withdrawParticipant,
 } from '../services/survey.js';
+import {
+  completeCognitiveSession,
+  ingestCognitiveSamples,
+} from '../services/cognitive.js';
 import { getEnabledInstrument } from '../services/study.js';
 import { badRequest } from '../lib/errors.js';
 import { config } from '../config.js';
@@ -48,12 +54,29 @@ export async function surveyRoutes(app: FastifyInstance) {
     return createSession(participant.id, body);
   });
 
+  app.post('/v1/sessions/:sessionId/cognitive-samples', async (request) => {
+    const participant = await requireParticipant(request);
+    const { sessionId } = request.params as { sessionId: string };
+    const body = cognitiveSamplesSchema.parse(request.body);
+    return ingestCognitiveSamples(participant, sessionId, body);
+  });
+
+  app.post('/v1/sessions/:sessionId/cognitive-complete', async (request) => {
+    const participant = await requireParticipant(request);
+    const { sessionId } = request.params as { sessionId: string };
+    const body = cognitiveCompleteSchema.parse(request.body);
+    return completeCognitiveSession(participant, sessionId, body);
+  });
+
   app.get('/v1/instruments/:code/:version', async (request) => {
     const params = request.params as { code: string; version: string };
     const query = request.query as { locale?: string };
     const locale = query.locale ?? 'en';
     const version = Number(params.version);
-    if (params.code !== 'ipip_bfm_50' || version !== 1) {
+    if (
+      (params.code !== 'ipip_bfm_50' && params.code !== 'cortical_battery_v1') ||
+      version !== 1
+    ) {
       throw badRequest('unsupported_instrument');
     }
     const { instrument, items } = await getEnabledInstrument(
