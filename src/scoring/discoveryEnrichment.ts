@@ -154,56 +154,56 @@ export function buildDiscoveryEnrichment(input: {
   const intelligencePatterns: IntelligencePattern[] = [
     {
       key: 'emotional',
-      label: 'Emotional attunement pattern',
+      label: 'People & feelings radar (emotional attunement)',
       index: emotionalIndex,
       band: bandFromPercentile(emotionalIndex),
       summary:
         emotionalIndex >= 65
-          ? 'Stronger relative pattern for reading social tone and staying regulated under people-load.'
+          ? 'You tend to pick up social tone and stay steadier with people-load than many peers.'
           : emotionalIndex <= 35
-            ? 'More reserved emotional signaling vs peers — clarity may come from structure more than rapport.'
-            : 'Balanced emotional attunement vs this study cohort.',
+            ? 'You may read the room more cautiously — clarity often comes from structure more than vibes.'
+            : 'A middle-of-the-road people radar vs this study group.',
       sources: [
-        'Agreeableness',
-        'Emotional Stability',
-        'Extraversion',
-        'Limbic-region interactive effort',
+        'Warmth & cooperation',
+        'Calm under pressure',
+        'Outgoing energy',
+        'Gut / approach–avoid games',
       ],
     },
     {
       key: 'motor',
-      label: 'Sensorimotor timing pattern',
+      label: 'Hands & timing (sensorimotor)',
       index: motorIndex,
       band: bandFromPercentile(motorIndex),
       summary:
         motorIndex >= 65
-          ? 'Snappier touch/timing signature under interactive load — useful for fast operational work.'
+          ? 'Your touch and timing stay snappy when the games get busy — great for fast ops work.'
           : motorIndex <= 35
-            ? 'More deliberate motor/timing signature — favors accuracy over rush.'
-            : 'Typical sensorimotor timing vs peers in this battery.',
+            ? 'You move more carefully under load — accuracy over rush.'
+            : 'Typical hands-and-timing feel vs peers in this battery.',
       sources: [
-        'Behavioral decisiveness',
-        'Questionnaire decision tempo',
-        'Perceptive-region effort',
-        'Mnemonic-region effort',
+        'Snap decisions under load',
+        'Questionnaire pace',
+        'Attention games',
+        'Memory games',
       ],
     },
     {
       key: 'logical',
-      label: 'Logical–executive pattern',
+      label: 'Puzzle & plan brain (logical–executive)',
       index: logicalIndex,
       band: bandFromPercentile(logicalIndex),
       summary:
         logicalIndex >= 65
-          ? 'Stronger relative pattern for structured problem-solving under switch-cost load.'
+          ? 'You hold up well when patterns and switch-cost puzzles stack up.'
           : logicalIndex <= 35
-            ? 'Less heuristic-forward vs peers — may prefer guided frameworks over open puzzle pressure.'
-            : 'Balanced logical–executive pattern vs this cohort.',
+            ? 'Open puzzle pressure may feel harder — guided frameworks help.'
+            : 'A balanced puzzle-and-plan style vs this cohort.',
       sources: [
-        'Intellect / Openness',
-        'Conscientiousness',
-        'Heuristic-region effort',
-        'Behavioral decisiveness',
+        'Curiosity & ideas',
+        'Follow-through',
+        'Problem-solving games',
+        'Snap decisions under load',
       ],
     },
   ];
@@ -212,44 +212,44 @@ export function buildDiscoveryEnrichment(input: {
   if (es <= 30) {
     affectiveTone.push({
       key: 'stress_sensitivity',
-      label: 'Stress sensitivity pattern',
+      label: 'Feels stress sooner',
       level: 'higher',
       summary:
-        'Lower Emotional Stability vs peers can show up as faster stress pickup — not a depression or anxiety diagnosis.',
+        'Calm-under-pressure sits lower vs peers — you may notice stress earlier. That is a vibe pattern, not a depression or anxiety diagnosis.',
     });
   } else if (es >= 70) {
     affectiveTone.push({
       key: 'stress_resilience',
-      label: 'Stress resilience pattern',
+      label: 'Stays steadier under heat',
       level: 'higher',
       summary:
-        'Higher Emotional Stability vs peers — steadier under pressure. Still not a clinical mood score.',
+        'Calm-under-pressure sits higher vs peers — you often keep a steadier tone when things spike. Still not a clinical mood score.',
     });
   } else {
     affectiveTone.push({
       key: 'stress_balance',
-      label: 'Stress balance pattern',
+      label: 'Normal stress weather',
       level: 'typical',
       summary:
-        'Emotional Stability near typical for this study — ordinary ups and downs, not clinical screening.',
+        'Calm-under-pressure is about average here — ordinary ups and downs, not a medical screen result.',
     });
   }
 
   if (impulse >= 70 && es <= 40) {
     affectiveTone.push({
       key: 'drive_under_pressure',
-      label: 'High-drive under soft restraint',
+      label: 'High drive, softer brakes',
       level: 'higher',
       summary:
-        'Higher drive/lower soft-restraint style plus lower stability — channel with deliberate pause habits.',
+        'Strong push plus lower calm can feel turbo — short pause habits help channel it.',
     });
   } else if (impulse <= 30) {
     affectiveTone.push({
       key: 'impulse_control',
-      label: 'Impulse control pattern',
+      label: 'Strong self-brakes',
       level: 'higher',
       summary:
-        'Stronger restraint signature — protective in conflict, sometimes over-cautious in speed contexts.',
+        'You hold back more than many peers — protective in conflict, sometimes too cautious when speed matters.',
     });
   }
 
@@ -270,7 +270,7 @@ export function buildDiscoveryEnrichment(input: {
       logicalIndex,
     }),
     enrichmentNote:
-      'Emotional / motor / logical layers are discovery composites from your existing session metrics — not IQ, EQ, or clinical diagnoses. Work fits are suggestive career families, not hiring advice.',
+      'People / hands / puzzle layers are simple composites from your session — not IQ, EQ, or medical scores. Career ideas are for curiosity, not hiring decisions.',
   };
 }
 

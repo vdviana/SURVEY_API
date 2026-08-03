@@ -104,27 +104,66 @@ export async function completeCognitiveSession(
     const assertivenessBps = computeAssertivenessBps(samples);
     const regionEffort = meanEffortByRegion(samples);
     const fingerprint = sketchFingerprint(samples);
-
-    await client.query(
-      `INSERT INTO cognitive_session_summaries (
-         session_id, assertiveness_bps, sample_count, block_count, region_effort, fingerprint
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-       ON CONFLICT (session_id) DO UPDATE SET
-         assertiveness_bps = EXCLUDED.assertiveness_bps,
-         sample_count = EXCLUDED.sample_count,
-         block_count = EXCLUDED.block_count,
-         region_effort = EXCLUDED.region_effort,
-         fingerprint = EXCLUDED.fingerprint,
-         completed_at = now()`,
-      [
-        sessionId,
-        assertivenessBps,
-        samples.length,
-        input.blockCount,
-        JSON.stringify(regionEffort),
-        fingerprint,
-      ],
+    const graded = samples.filter(
+      (s) =>
+        s.type === 'answer' &&
+        (typeof s.fidelity01 === 'number' || typeof s.hitRate === 'number'),
     );
+    const meanResponseFidelity =
+      graded.length > 0
+        ? graded.reduce((a, s) => a + (s.fidelity01 ?? s.hitRate ?? 0), 0) /
+          graded.length
+        : null;
+
+    try {
+      await client.query(
+        `INSERT INTO cognitive_session_summaries (
+           session_id, assertiveness_bps, sample_count, block_count, region_effort, fingerprint,
+           mean_response_fidelity
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+         ON CONFLICT (session_id) DO UPDATE SET
+           assertiveness_bps = EXCLUDED.assertiveness_bps,
+           sample_count = EXCLUDED.sample_count,
+           block_count = EXCLUDED.block_count,
+           region_effort = EXCLUDED.region_effort,
+           fingerprint = EXCLUDED.fingerprint,
+           mean_response_fidelity = EXCLUDED.mean_response_fidelity,
+           completed_at = now()`,
+        [
+          sessionId,
+          assertivenessBps,
+          samples.length,
+          input.blockCount,
+          JSON.stringify(regionEffort),
+          fingerprint,
+          meanResponseFidelity,
+        ],
+      );
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== '42703') throw err;
+      // DB without migration 008 — write without mean_response_fidelity
+      await client.query(
+        `INSERT INTO cognitive_session_summaries (
+           session_id, assertiveness_bps, sample_count, block_count, region_effort, fingerprint
+         ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+         ON CONFLICT (session_id) DO UPDATE SET
+           assertiveness_bps = EXCLUDED.assertiveness_bps,
+           sample_count = EXCLUDED.sample_count,
+           block_count = EXCLUDED.block_count,
+           region_effort = EXCLUDED.region_effort,
+           fingerprint = EXCLUDED.fingerprint,
+           completed_at = now()`,
+        [
+          sessionId,
+          assertivenessBps,
+          samples.length,
+          input.blockCount,
+          JSON.stringify(regionEffort),
+          fingerprint,
+        ],
+      );
+    }
 
     await client.query(
       `UPDATE survey_sessions

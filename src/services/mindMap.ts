@@ -127,26 +127,47 @@ function buildArchetype(input: {
 
   const superpowers: string[] = [];
   const blindSpots: string[] = [];
+  const oceanPlain: Record<string, string> = {
+    extraversion: 'outgoing energy',
+    agreeableness: 'warmth & cooperation',
+    conscientiousness: 'follow-through',
+    emotional_stability: 'calm under pressure',
+    intellect: 'curiosity & ideas',
+  };
   for (const o of input.ocean) {
-    const label = OCEAN_LABELS[o.scaleKey] ?? o.scaleKey;
-    if (o.percentile >= 70) superpowers.push(`Strength in ${label}`);
-    if (o.percentile <= 30) blindSpots.push(`Lower relative ${label}`);
+    const plain = oceanPlain[o.scaleKey] ?? OCEAN_LABELS[o.scaleKey] ?? o.scaleKey;
+    const tech = OCEAN_LABELS[o.scaleKey] ?? o.scaleKey;
+    if (o.percentile >= 70) {
+      superpowers.push(`Natural strength in ${plain} (${tech})`);
+    }
+    if (o.percentile <= 30) {
+      blindSpots.push(`Lower ${plain} vs peers — may need extra structure (${tech})`);
+    }
   }
   if (input.assertivenessPercentile >= 70) {
-    superpowers.push('Strong behavioral decisiveness under interactive load');
+    superpowers.push('Makes clear calls when the games get noisy (decisiveness under load)');
   } else if (input.assertivenessPercentile <= 30) {
-    blindSpots.push('Slower decisiveness under interactive load — may need pacing cues');
+    blindSpots.push('Takes more time to commit under load — pacing cues help');
   }
   if (superpowers.length === 0) {
-    superpowers.push('Balanced profile across discovery layers');
+    superpowers.push('Balanced mix — no single trait dominates');
   }
   if (blindSpots.length === 0) {
-    blindSpots.push('No extreme blind spots vs this cohort sample');
+    blindSpots.push('No extreme watch-outs vs this study group');
   }
+
+  const topPlain = top
+    ? oceanPlain[top.scaleKey] ?? OCEAN_LABELS[top.scaleKey] ?? top.scaleKey
+    : 'a balanced mix';
+  const lowPlain = low
+    ? oceanPlain[low.scaleKey] ?? OCEAN_LABELS[low.scaleKey] ?? low.scaleKey
+    : null;
 
   return {
     name: nameParts.slice(0, 3).join(' '),
-    summary: `Your discovery pattern leans ${top ? OCEAN_LABELS[top.scaleKey] ?? top.scaleKey : 'balanced'} relative to others in this study, with ${low ? `relatively lower ${OCEAN_LABELS[low.scaleKey] ?? low.scaleKey}` : 'even traits'}.`,
+    summary: `In everyday terms, you lean toward ${topPlain}${
+      lowPlain ? `, with relatively less ${lowPlain}` : ''
+    }. Compared with others in this study, that mix is your signature — not a fixed personality cage.`,
     superpowers: superpowers.slice(0, 4),
     blindSpots: blindSpots.slice(0, 3),
   };
@@ -326,7 +347,7 @@ export async function finalizePersonalityProfile(
       phq9: { ...phqFlag, percentile: phqPercentile },
       gad7: { ...gadFlag, percentile: gadPercentile },
       presentationRule:
-        'Flags describe possible symptom patterns from public screens (PHQ-9 / GAD-7). They are not clinical confirmation, diagnosis, prognosis, or treatment advice.',
+        'These are short public mood checklists (low-mood / worry). They flag possible patterns only — not a doctor’s diagnosis.',
     };
 
     const assertivenessBps = Number(cortical.rows[0].assertiveness_bps);
@@ -378,8 +399,9 @@ export async function finalizePersonalityProfile(
     });
 
     const discoveryMap = {
-      title: 'Deep Mind Auto-Discovery Map',
-      tagline: 'Patterns discovered from your session — compared with others in this study.',
+      title: 'Your Mind Map',
+      tagline:
+        'A plain-language snapshot of your patterns — research terms kept for transparency.',
       ocean,
       darkTriad,
       cortical: corticalPhenotyping,

@@ -35,11 +35,11 @@ export async function enrollParticipant(input: {
   locale: string;
   clientAppVersion: string;
 }) {
-  if (input.locale === 'pt-BR') {
-    throw badRequest('locale_not_enabled', {
-      locale: 'pt-BR',
-      message:
-        'Brazilian Portuguese collection is disabled until validated item wording is supplied.',
+  const allowed = new Set(['en', 'pt-BR', 'zh-CN', 'ru', 'es']);
+  if (!allowed.has(input.locale)) {
+    throw badRequest('locale_not_supported', {
+      locale: input.locale,
+      message: 'Supported locales: en, pt-BR, zh-CN, ru, es.',
     });
   }
 
@@ -267,6 +267,7 @@ function publicInstrument(
       itemId: item.item_id,
       sequenceIndex: item.sequence_index,
       itemTextEn: item.item_text_en,
+      itemText: item.resolved_text ?? item.item_text_en,
       required: item.required,
     })),
   };

@@ -18,6 +18,7 @@ export type CognitiveSample = {
   rtMs?: number;
   errorCount?: number;
   hitRate?: number;
+  fidelity01?: number;
   sensorEnergy?: number;
   difficulty?: number;
   dualTaskBreaks?: number;
@@ -28,7 +29,7 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/** Port of APP telemetry assertiveness — timing irregularity + latency + honeypot/invalid + effort variance. */
+/** Port of APP telemetry assertiveness — timing + effort + gradient response fidelity. */
 export function computeAssertivenessBps(samples: CognitiveSample[]): number {
   if (samples.length < 8) return 5000;
 
@@ -96,11 +97,26 @@ export function computeAssertivenessBps(samples: CognitiveSample[]): number {
     effortScore = clamp(eMean * 0.7 + Math.sqrt(eVar) * 2, 0, 1) * flatPenalty;
   }
 
+  const graded = samples.filter(
+    (s) =>
+      s.type === 'answer' &&
+      (typeof s.fidelity01 === 'number' || typeof s.hitRate === 'number'),
+  );
+  let responseScore = 0.5;
+  if (graded.length > 0) {
+    responseScore = clamp(
+      graded.reduce((a, s) => a + (s.fidelity01 ?? s.hitRate ?? 0), 0) / graded.length,
+      0,
+      1,
+    );
+  }
+
   const blended =
-    irregularityScore * 0.35 +
-    latencyScore * 0.25 +
-    cleanScore * 0.15 +
-    effortScore * 0.25;
+    irregularityScore * 0.28 +
+    latencyScore * 0.2 +
+    cleanScore * 0.12 +
+    effortScore * 0.2 +
+    responseScore * 0.2;
   return clamp(Math.round(5500 + blended * 3700), 0, 10000);
 }
 

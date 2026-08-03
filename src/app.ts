@@ -33,10 +33,20 @@ export async function buildApp() {
   await app.register(surveyRoutes);
 
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof ZodError) {
+    const isZod =
+      error instanceof ZodError ||
+      (error &&
+        typeof error === 'object' &&
+        ((error as { name?: string }).name === 'ZodError' ||
+          Array.isArray((error as { issues?: unknown }).issues)));
+    if (isZod) {
+      const zerr = error as ZodError;
       return reply.code(400).send({
         error: 'validation_error',
-        details: error.flatten(),
+        details:
+          typeof zerr.flatten === 'function'
+            ? zerr.flatten()
+            : (error as { issues?: unknown }).issues,
       });
     }
     if (error instanceof HttpError) {

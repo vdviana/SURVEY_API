@@ -101,6 +101,7 @@ export async function surveyRoutes(app: FastifyInstance) {
       evidenceTier: instrument.evidence_tier,
       responseScale: instrument.response_scale,
       instructionsEn: instrument.instructions_en,
+      instructions: instrument.instructions_en,
       itemCount: instrument.item_count,
       manifestHash: instrument.manifest_hash,
       scorerId: instrument.scorer_id,
@@ -110,6 +111,7 @@ export async function surveyRoutes(app: FastifyInstance) {
         itemId: item.item_id,
         sequenceIndex: item.sequence_index,
         itemTextEn: item.item_text_en,
+        itemText: item.resolved_text ?? item.item_text_en,
         required: item.required,
       })),
     };

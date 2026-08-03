@@ -1,8 +1,30 @@
 import { z } from 'zod';
 
+/** Normalize common locale aliases before enum check. */
+function normalizeLocale(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const v = value.trim();
+  const lower = v.toLowerCase();
+  if (lower === 'en' || lower === 'en-us' || lower === 'en_us') return 'en';
+  if (lower === 'pt' || lower === 'pt-br' || lower === 'pt_br' || lower === 'pt-br')
+    return 'pt-BR';
+  if (lower === 'zh' || lower === 'zh-cn' || lower === 'zh_cn' || lower === 'zh-hans')
+    return 'zh-CN';
+  if (lower === 'ru' || lower === 'ru-ru' || lower === 'ru_ru') return 'ru';
+  if (lower === 'es' || lower === 'es-es' || lower === 'es_es' || lower === 'es-mx')
+    return 'es';
+  if (v === 'pt-BR' || v === 'zh-CN') return v;
+  return v;
+}
+
+const surveyLocaleSchema = z.preprocess(
+  normalizeLocale,
+  z.enum(['en', 'pt-BR', 'zh-CN', 'ru', 'es']),
+);
+
 export const enrollSchema = z.object({
   studyCode: z.string().min(1),
-  locale: z.enum(['en', 'pt-BR']).default('en'),
+  locale: surveyLocaleSchema.default('en'),
   clientAppVersion: z.string().min(1),
 });
 
@@ -23,7 +45,7 @@ export const createSessionSchema = z.object({
     'gad7_v1',
   ]),
   instrumentVersion: z.literal(1),
-  locale: z.enum(['en', 'pt-BR']),
+  locale: surveyLocaleSchema,
   manifestHash: z.string().startsWith('sha256:'),
   clientAppVersion: z.string().min(1),
   contextAnswers: z
@@ -80,6 +102,7 @@ const cognitiveSampleSchema = z.object({
   rtMs: z.number().optional(),
   errorCount: z.number().optional(),
   hitRate: z.number().optional(),
+  fidelity01: z.number().min(0).max(1).optional(),
   sensorEnergy: z.number().optional(),
   difficulty: z.number().optional(),
   dualTaskBreaks: z.number().optional(),
