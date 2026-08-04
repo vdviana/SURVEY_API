@@ -70,13 +70,14 @@ async function loadNorm(
 
 async function bumpNorm(client: DbClient, scaleKey: string, value: number) {
   const existing = await client.query(
-    `SELECT sample_count, mean_score, std_score FROM personality_norm_stats WHERE scale_key = $1 FOR UPDATE`,
+    `SELECT sample_count, mean_score, std_score FROM personality_norm_stats WHERE scale_key = $1`,
     [scaleKey],
   );
   if (!existing.rows[0]) {
     await client.query(
       `INSERT INTO personality_norm_stats (scale_key, sample_count, mean_score, std_score)
-       VALUES ($1, 1, $2, 0.7)`,
+       VALUES ($1, 1, $2, 0.7)
+       ON CONFLICT (scale_key) DO NOTHING`,
       [scaleKey, value],
     );
     return;
@@ -84,15 +85,18 @@ async function bumpNorm(client: DbClient, scaleKey: string, value: number) {
   const n = Number(existing.rows[0].sample_count);
   const mean = Number(existing.rows[0].mean_score);
   const std = Number(existing.rows[0].std_score);
+  if (!Number.isFinite(value) || !Number.isFinite(mean) || !Number.isFinite(std)) {
+    return;
+  }
   const nextN = n + 1;
   const nextMean = mean + (value - mean) / nextN;
-  // Welford-ish variance proxy from prior std
   const priorVar = std * std;
   const nextVar =
     n <= 0
       ? priorVar
       : ((n - 1) * priorVar + (value - mean) * (value - nextMean)) / Math.max(1, n);
   const nextStd = Math.sqrt(Math.max(0.05, nextVar));
+  if (!Number.isFinite(nextMean) || !Number.isFinite(nextStd)) return;
   await client.query(
     `UPDATE personality_norm_stats
      SET sample_count = $2, mean_score = $3, std_score = $4, updated_at = now()
@@ -191,12 +195,21 @@ export async function finalizePersonalityProfile(
     likertLatencies: LikertLatencyInput[];
   },
 ) {
+  // Fast path outside a long transaction — avoids Render timeouts on retries.
+  const existing = await pool.query(
+    `SELECT id FROM personality_profiles WHERE participant_id = $1`,
+    [participantId],
+  );
+  if (existing.rows[0]) {
+    return getParticipantMindMap(participantId);
+  }
+
   return withTransaction(async (client) => {
-    const existing = await client.query(
+    const again = await client.query(
       `SELECT id FROM personality_profiles WHERE participant_id = $1`,
       [participantId],
     );
-    if (existing.rows[0]) {
+    if (again.rows[0]) {
       return getMindMapPublic(client, participantId);
     }
 
